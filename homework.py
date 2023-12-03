@@ -2,7 +2,7 @@ import logging
 import logging.config
 import os
 import time
-from datetime import date, datetime
+import datetime
 
 import requests
 import telegram
@@ -63,8 +63,7 @@ def get_api_answer(timestamp):
     """Запрос к эндпоинту API-сервиса Яндекс."""
     url = "https://practicum.yandex.ru/api/user_api/homework_statuses/"
     headers = {"Authorization": f"OAuth {PRACTICUM_TOKEN}"}
-    print(type(timestamp))
-    if type(timestamp) is datetime.date:
+    if isinstance(timestamp, datetime.date):
         timestamp = unix_date(timestamp)
     payload = {"from_date": timestamp}
     try:
@@ -108,7 +107,7 @@ def parse_status(homework):
         raise ValueError("В ответе API нет ключа 'homework_name'")
     if homework["status"] in HOMEWORK_VERDICTS:
         verdict = HOMEWORK_VERDICTS[homework["status"]]
-        return f"Изменился статус проверки работы {homework_name}. {verdict}"
+        return f'Изменился статус проверки работы "{homework_name}". {verdict}'
     else:
         raise ValueError(
             f"API содержит не документированный статус: {homework['status']}"
@@ -117,7 +116,7 @@ def parse_status(homework):
 
 def main():
     """Основная логика работы бота."""
-    from_date = date(2023, 10, 30)
+    from_date = datetime.date(2023, 10, 30)
     try:
         check_tokens()
         logger.debug("Переменные окружения доступны")
@@ -125,7 +124,6 @@ def main():
         logger.critical(f"Ошибка в переменных окружения: {error}")
         return
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
-    # timestamp = int(time.time())
     prev_response = None
     while True:
         try:
