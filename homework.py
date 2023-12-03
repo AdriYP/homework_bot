@@ -2,7 +2,7 @@ import logging
 import logging.config
 import os
 import time
-from datetime import date
+from datetime import date, datetime
 
 import requests
 import telegram
@@ -13,19 +13,19 @@ load_dotenv()
 
 prev_err_msg = None
 
-PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+PRACTICUM_TOKEN = os.getenv("PRACTICUM_TOKEN")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 RETRY_PERIOD = 600
-ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
-HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
+ENDPOINT = "https://practicum.yandex.ru/api/user_api/homework_statuses/"
+HEADERS = {"Authorization": f"OAuth {PRACTICUM_TOKEN}"}
 
 
 HOMEWORK_VERDICTS = {
-    'approved': 'Работа проверена: ревьюеру всё понравилось. Ура!',
-    'reviewing': 'Работа взята на проверку ревьюером.',
-    'rejected': 'Работа проверена: у ревьюера есть замечания.'
+    "approved": "Работа проверена: ревьюеру всё понравилось. Ура!",
+    "reviewing": "Работа взята на проверку ревьюером.",
+    "rejected": "Работа проверена: у ревьюера есть замечания.",
 }
 
 
@@ -61,44 +61,58 @@ def send_message(bot, message):
 
 def get_api_answer(timestamp):
     """Запрос к эндпоинту API-сервиса Яндекс."""
-    url = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
-    headers = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
-    payload = {'from_date': unix_date(timestamp)}
+    url = "https://practicum.yandex.ru/api/user_api/homework_statuses/"
+    headers = {"Authorization": f"OAuth {PRACTICUM_TOKEN}"}
+    print(type(timestamp))
+    if type(timestamp) is datetime.date:
+        timestamp = unix_date(timestamp)
+    payload = {"from_date": timestamp}
     try:
         homework_statuses = requests.get(url, headers=headers, params=payload)
-        return homework_statuses.json()
+        if homework_statuses.status_code == 200:
+            return homework_statuses.json()
+        else:
+            raise Exception(
+                f"Эндпоинт {url} недоступен. Код ответа API: "
+                f"{homework_statuses.status_code}"
+            )
     except Exception:
-        raise Exception(f"Эндпоинт {url} недоступен. Код ответа API: "
-                        f"{homework_statuses.status_code}")
+        raise Exception(
+            f"Эндпоинт {url} недоступен. Код ответа API: "
+            f"{homework_statuses.status_code}"
+        )
 
 
 def check_response(response):
     """Проверка ответа API на соответствие API сервиса Практикум.Домашка."""
     try:
-        homeworks = response['homeworks']
+        homeworks = response["homeworks"]
     except KeyError as error:
         raise KeyError("В запросе отсуствует список домашних работ.", error)
-    keys = ['date_updated', 'homework_name', 'id', 'lesson_name',
-            'reviewer_comment', 'status']
+    if type(homeworks) is not list:
+        raise TypeError("Данные в API не в виде спсика.")
+    keys = ["homework_name", "status"]
     for homework in homeworks:
         for key in keys:
             if key not in homework:
-                raise KeyError(f"В списоке домашних работ не найден ключ "
+                raise KeyError("В списоке домашних работ не найден ключ "
                                f"'{key}'")
     return True
 
 
 def parse_status(homework):
     """извлекает статус из последней домашней работы."""
-    homework_name = homework['homework_name']
-    try:
-        verdict = HOMEWORK_VERDICTS[homework['status']]
-        return (f"Изменился статус проверки работы '"
-                f"{homework_name}'. {verdict}")
-    except Exception:
-        logger.error("Ответ API Yandex содержит не документированный "
-                     f"статус {homework['status']}.")
-        return None
+    if "homework_name" in homework:
+        homework_name = homework["homework_name"]
+    else:
+        raise ValueError("В ответе API нет ключа 'homework_name'")
+    if homework["status"] in HOMEWORK_VERDICTS:
+        verdict = HOMEWORK_VERDICTS[homework["status"]]
+        return f"Изменился статус проверки работы {homework_name}. {verdict}"
+    else:
+        raise ValueError(
+            f"API содержит не документированный статус: {homework['status']}"
+        )
 
 
 def main():
@@ -111,25 +125,26 @@ def main():
         logger.critical(f"Ошибка в переменных окружения: {error}")
         return
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
+    # timestamp = int(time.time())
     prev_response = None
     while True:
         try:
             response = get_api_answer(from_date)
             logger.debug("Успешный запрос к API.")
             check_response(response)
-            if prev_response != response['homeworks']:
-                prev_response = response['homeworks']
-                if len(response['homeworks']) > 0:
-                    send_message(bot, parse_status(response['homeworks'][0]))
+            if prev_response != response["homeworks"]:
+                prev_response = response["homeworks"]
+                if len(response["homeworks"]) > 0:
+                    send_message(bot, parse_status(response["homeworks"][0]))
                 else:
                     logger.warning("Ответ API не содержит домашних работ")
             else:
                 logger.debug("В ответе API отсутствуют новые статусы.")
         except Exception as error:
-            message = f'Сбой в работе программы: {error}'
-
+            message = f"Сбой в работе программы: {error}"
             logger.error(message)
-        time.sleep(600)
+        finally:
+            time.sleep(600)
 
 
 class TelegramBotHandler(logging.Handler):
@@ -143,11 +158,10 @@ class TelegramBotHandler(logging.Handler):
 
     def emit(self, record):
         """Отправка сообщения."""
-        url = f'https://api.telegram.org/bot{self.token}/sendMessage'
-        post_data = {'chat_id': self.chat_id,
-                     'text': self.format(record)}
+        url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+        post_data = {"chat_id": self.chat_id, "text": self.format(record)}
         http = urllib3.PoolManager()
-        http.request(method='POST', url=url, fields=post_data)
+        http.request(method="POST", url=url, fields=post_data)
 
 
 class msg_filter(logging.Filter):
@@ -175,45 +189,39 @@ def log_config():
     """JSON конфигурация логгера."""
     return {
         "version": 1,
-        "filters": {
-            "filter": {
-                "()": "__main__.msg_filter",
-                'param': 'noshow'
-            }
-        },
+        "filters": {"filter": {"()": "homework.msg_filter",
+                               "param": "noshow"}},
         "formatters": {
-            "detailed": {
-                "format": "%(asctime)s [%(levelname)s] %(message)s"
-            }
+            "detailed": {"format": "%(asctime)s [%(levelname)s] %(message)s"}
         },
         "handlers": {
             "std": {
                 "class": "logging.StreamHandler",
                 "stream": "ext://sys.stdout",
                 "level": "DEBUG",
-                "formatter": "detailed"
+                "formatter": "detailed",
             },
             "tgh": {
-                "class": "__main__.TelegramBotHandler",
+                "class": "homework.TelegramBotHandler",
                 "level": "WARNING",
-                'filters': ['filter'],
+                "filters": ["filter"],
                 "token": TELEGRAM_TOKEN,
-                "chat_id": TELEGRAM_CHAT_ID
-            }
+                "chat_id": TELEGRAM_CHAT_ID,
+            },
         },
         "loggers": {
             "app": {
                 "handlers": ["std", "tgh"],
                 "level": "DEBUG",
             }
-        }
+        },
     }
 
 
 logging.config.dictConfig(log_config())
 logger = logging.getLogger("app.homework")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     logger.info("Запуск сервиса...")
     main()
     logger.info("Сервис остановлен.")
