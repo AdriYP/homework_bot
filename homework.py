@@ -121,6 +121,18 @@ def parse_status(homework):
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
+def tg_log(bot, message):
+    """Фильтрация и отправка log сообщений в telegram."""
+    words = ["telegram"]
+    for word in words:
+        if word.lower() in message.lower():
+            return
+    global prev_err_msg
+    if message != prev_err_msg:
+        prev_err_msg = message
+        send_message(bot, message)
+
+
 def main():
     """Основная логика работы бота."""
     from_date = int(time.time())
@@ -146,42 +158,16 @@ def main():
                 logger.debug("В ответе API отсутствуют новые статусы.")
         except Exception as error:
             message = f"Сбой в работе программы: {error}"
-            global prev_err_msg
-            if message != prev_err_msg:
-                prev_err_msg = message
-                send_message(bot, message)
             logger.error(message)
+            tg_log(bot, message)
         finally:
             time.sleep(RETRY_PERIOD)
-
-
-class msg_filter(logging.Filter):
-    """Класс для фитрации log сообщений в чат бота."""
-
-    def __init__(self, param=None):
-        """Конструктор."""
-        self.param = param
-
-    def filter(self, record):
-        """Параметры фильтрации."""
-        global prev_err_msg
-        words = ["telegram"]
-        for word in words:
-            if word.lower() in record.msg.lower():
-                return False
-        if prev_err_msg == record.msg:
-            return False
-        else:
-            prev_err_msg = record.msg
-            return True
 
 
 def log_config():
     """JSON конфигурация логгера."""
     return {
         "version": 1,
-        "filters": {"filter": {"()": "homework.msg_filter",
-                               "param": "noshow"}},
         "formatters": {
             "detailed": {"format": "%(asctime)s [%(levelname)s] %(message)s"}
         },
