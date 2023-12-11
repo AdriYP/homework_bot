@@ -1,22 +1,21 @@
 import logging
 import logging.config
 import os
-import sys
 import time
 from http import HTTPStatus
 from json import JSONDecodeError
 
 import requests
-import telegram
 from dotenv import load_dotenv
+from telegram import Bot, TelegramError
 
-from exceptions import APIResponseError
+from exceptions import APIResponseError, TGMessageError
 
 load_dotenv()
 
 prev_err_msg = None
 
-PRACTICUM_TOKEN = os.getenv("PRACTICUM_TOKEN1")
+PRACTICUM_TOKEN = os.getenv("PRACTICUM_TOKEN")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
@@ -52,8 +51,9 @@ def send_message(bot, message):
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
         logger.debug(f"Бот отправил сообщение '{message}'")
-    except Exception:
-        raise Exception("Сбой при отправке сообщения в Telegram")
+    except TelegramError:
+        raise TGMessageError("Сбой при отправке сообщения в Telegram: "
+                             f"{message}")
 
 
 def get_api_answer(timestamp):
@@ -86,20 +86,22 @@ def check_response(response):
         raise TypeError(
             f"Запрос не является словарём: {type(response)}, {response}"
         )
+    if "current_date" not in response.keys():
+        raise KeyError("В ответе API отсуствует ключ 'current_date'")
     homeworks = response.get("homeworks")
     if homeworks is None:
         raise KeyError("Отсутствуют данные по домашним работам")
-    try:
-        homeworks = response["homeworks"]
-    except KeyError as error:
-        raise KeyError("В запросе отсуствует список домашних работ.", error)
-    if type(homeworks) is not list:
+    if not isinstance(homeworks, list):
         raise TypeError("Данные в API не в виде спсика.")
     keys = ["homework_name", "status"]
+    try:
+        homework = next(iter(homeworks))
+    except StopIteration:
+        raise ValueError("В ответе API нет ни одной домашней работы на дату: "
+                         f"{response.get('current_date')}")
     for key in keys:
-        if key not in homeworks[0]:
-            raise KeyError("В списоке домашних работ не найден ключ "
-                           f"'{key}'")
+        if key not in homework:
+            raise KeyError(f"В домашней работе не найден ключ '{key}'")
     return True
 
 
@@ -113,11 +115,11 @@ def parse_status(homework):
     if "homework_name" not in homework:
         raise ValueError("В ответе API нет ключа 'homework_name'")
     homework_name = homework["homework_name"]
-    if homework["status"] not in HOMEWORK_VERDICTS:
-        raise ValueError(
-            f"API содержит не документированный статус: {homework['status']}"
-        )
-    verdict = HOMEWORK_VERDICTS[homework["status"]]
+    status = homework["status"]
+    if status not in HOMEWORK_VERDICTS:
+        raise ValueError(f"API содержит не документированный статус: {status}"
+                         )
+    verdict = HOMEWORK_VERDICTS[status]
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
@@ -139,9 +141,9 @@ def main():
     if check_tokens():
         logger.debug("Переменные окружения доступны")
     else:
-        logger.critical("Ошибка в переменных окружения")
-        sys.exit()
-    bot = telegram.Bot(token=TELEGRAM_TOKEN)
+        raise ValueError("Ошибка в переменных окружения. Приложение "
+                         "остановлено.")
+    bot = Bot(token=TELEGRAM_TOKEN)
     prev_response = None
     while True:
         try:
