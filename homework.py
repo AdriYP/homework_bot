@@ -86,7 +86,7 @@ def check_response(response):
         raise TypeError(
             f"Запрос не является словарём: {type(response)}, {response}"
         )
-    if "current_date" not in response.keys():
+    if "current_date" not in response:
         raise KeyError("В ответе API отсуствует ключ 'current_date'")
     homeworks = response.get("homeworks")
     if homeworks is None:
@@ -94,9 +94,9 @@ def check_response(response):
     if not isinstance(homeworks, list):
         raise TypeError("Данные в API не в виде спсика.")
     keys = ["homework_name", "status"]
-    try:
-        homework = next(iter(homeworks))
-    except StopIteration:
+    if bool(homeworks):
+        homework = homeworks[0]
+    else:
         raise ValueError("В ответе API нет ни одной домашней работы на дату: "
                          f"{response.get('current_date')}")
     for key in keys:
@@ -115,12 +115,14 @@ def parse_status(homework):
     if "homework_name" not in homework:
         raise ValueError("В ответе API нет ключа 'homework_name'")
     homework_name = homework["homework_name"]
+    if "status" not in homework:
+        raise ValueError("В ответе API нет ключа 'status'")
     status = homework["status"]
     if status not in HOMEWORK_VERDICTS:
         raise ValueError(f"API содержит не документированный статус: {status}"
                          )
     verdict = HOMEWORK_VERDICTS[status]
-    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
+    return (f"Изменился статус проверки работы \"{homework_name}\". {verdict}")
 
 
 def tg_log(bot, message):
