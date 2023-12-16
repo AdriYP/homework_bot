@@ -89,20 +89,15 @@ def check_response(response):
     if "current_date" not in response:
         raise KeyError("В ответе API отсуствует ключ 'current_date'")
     homeworks = response.get("homeworks")
-    if homeworks is None:
+    if not homeworks:
         raise KeyError("Отсутствуют данные по домашним работам")
     if not isinstance(homeworks, list):
         raise TypeError("Данные в API не в виде спсика.")
     keys = ["homework_name", "status"]
-    if bool(homeworks):
-        homework = homeworks[0]
-    else:
-        raise ValueError("В ответе API нет ни одной домашней работы на дату: "
-                         f"{response.get('current_date')}")
     for key in keys:
-        if key not in homework:
+        if not any(key in homework for homework in homeworks):
             raise KeyError(f"В домашней работе не найден ключ '{key}'")
-    return True
+    return homeworks
 
 
 def parse_status(homework):
@@ -140,6 +135,7 @@ def tg_log(bot, message):
 def main():
     """Основная логика работы бота."""
     from_date = int(time.time())
+    from_date = 0
     if check_tokens():
         logger.debug("Переменные окружения доступны")
     else:
@@ -151,15 +147,19 @@ def main():
         try:
             response = get_api_answer(from_date)
             logger.debug("Успешный запрос к API.")
-            check_response(response)
-            if prev_response != response["homeworks"]:
-                prev_response = response["homeworks"]
-                if response["homeworks"]:
-                    send_message(bot, parse_status(response["homeworks"][0]))
+            homeworks = check_response(response)
+            if homeworks:
+                message = parse_status(homeworks[0])
+                if prev_response != message:
+                    prev_response = message
+                    send_message(bot, message)
                 else:
-                    logger.warning("Ответ API не содержит домашних работ")
+                    logger.debug("В ответе API отсутствуют новые статусы.")
+                    raise ValueError("В ответе API нет ни одной домашней "
+                                     "работы на дату: "
+                                     f"{response.get('current_date')}")
             else:
-                logger.debug("В ответе API отсутствуют новые статусы.")
+                logger.warning("Ответ API не содержит домашних работ")
         except Exception as error:
             message = f"Сбой в работе программы: {error}"
             logger.error(message)
